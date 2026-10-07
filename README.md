@@ -6,10 +6,27 @@ dashboard window (battery ring, input/output cards, AC/DC on/off switches, runti
 similar to the Android app. The only thing it ever writes to the device is the AC/DC output
 switches; turning AC off asks for confirmation first.
 
+## Screenshots
+
+Top bar (battery → ↓ input → ↑ output):
+
+![Top bar](docs/screenshots/tray.png)
+
+Dashboard, dark and light theme:
+
+<p>
+  <img src="docs/screenshots/dashboard-dark.png" alt="Dashboard, dark theme" width="380">
+  <img src="docs/screenshots/dashboard-light.png" alt="Dashboard, light theme" width="380">
+</p>
+
+<sub>Rendered from the app's own widgets and icons with sample data.</sub>
+
 ## Install (Ubuntu)
 
 ```bash
 sudo apt install python3-bleak gir1.2-ayatanaappindicator3-0.1
+git clone https://github.com/fgtb599/bluetti-linux.git
+cd bluetti-linux
 ```
 
 GNOME needs the AppIndicator extension (`ubuntu-appindicators@ubuntu.com`, enabled by default on Ubuntu).

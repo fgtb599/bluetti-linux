@@ -220,6 +220,8 @@ class TrayApp:
             authors=["Oleksii Chistyakov"],
             copyright="© 2026 Oleksii Chistyakov",
             logo_icon_name="battery-full-symbolic",
+            website="https://github.com/fgtb599/bluetti-linux",
+            website_label="GitHub",
         )
         about.add_credit_section("Protocol research", ["bluetti_mqtt by warhammerkid"])
         about.connect("response", lambda d, _r: d.destroy())

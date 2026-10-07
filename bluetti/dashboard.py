@@ -143,7 +143,7 @@ class Dashboard(Gtk.Window):
     def __init__(self, on_output, menu):
         super().__init__(title="Bluetti EB3A")
         self.on_output = on_output
-        self.set_default_size(380, 640)
+        self.set_default_size(380, -1)  # height follows the content
         self.get_style_context().add_class("dashboard")
         self.connect("delete-event", lambda w, _e: w.hide_on_delete())
 
