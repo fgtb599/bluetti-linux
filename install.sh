@@ -17,6 +17,12 @@ entry() {
     sed -e "s|/path/to/bluetti-linux|$DIR|" -e "/^Exec=/s|\$|$1|" "$DIR/$APP_ID.desktop"
 }
 
+# Autostart opens no window, so no "starting…" busy cursor either.
+autostart_entry() {
+    entry " --hidden" | sed "s/^StartupNotify=true/StartupNotify=false/"
+    echo "X-GNOME-Autostart-enabled=true"
+}
+
 case "${1:-}" in
 "" | --autostart)
     mkdir -p "$APPS"
@@ -24,7 +30,7 @@ case "${1:-}" in
     echo "Launcher: $APPS/$APP_ID.desktop"
     if [ "${1:-}" = --autostart ]; then
         mkdir -p "$AUTOSTART"
-        { entry " --hidden"; echo "X-GNOME-Autostart-enabled=true"; } >"$AUTOSTART/$APP_ID.desktop"
+        autostart_entry >"$AUTOSTART/$APP_ID.desktop"
         rm -f "$AUTOSTART/bluetti-tray.desktop"  # entry from older versions
         echo "Autostart: $AUTOSTART/$APP_ID.desktop"
     fi
