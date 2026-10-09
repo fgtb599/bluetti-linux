@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetti EB3A
+GenericName=Power station monitor
+Comment=Battery, input and output of a Bluetti EB3A over Bluetooth
+Exec=python3 "/path/to/bluetti-linux/bluetti_tray.py"
+Icon=battery-good-symbolic
+Terminal=false
+Categories=System;Monitor;
+Keywords=bluetti;eb3a;battery;power;solar;
+StartupNotify=true
+StartupWMClass=io.github.fgtb599.BluettiLinux

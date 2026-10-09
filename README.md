@@ -24,12 +24,14 @@ Dashboard, dark and light theme:
 ## Install (Ubuntu)
 
 ```bash
-sudo apt install python3-bleak gir1.2-ayatanaappindicator3-0.1
+sudo apt install python3-bleak
 git clone https://github.com/fgtb599/bluetti-linux.git
 cd bluetti-linux
 ```
 
-GNOME needs the AppIndicator extension (`ubuntu-appindicators@ubuntu.com`, enabled by default on Ubuntu).
+The tray icons use the StatusNotifierItem D-Bus protocol directly, so no AppIndicator library is needed.
+GNOME needs the AppIndicator extension (`ubuntu-appindicators@ubuntu.com`, enabled by default on Ubuntu);
+if it is off, the app says so at startup.
 
 ## Run
 
@@ -38,6 +40,9 @@ python3 bluetti_tray.py              # active device from Devices…, else the f
 python3 bluetti_tray.py --address XX:XX:XX:XX:XX:XX --interval 3   # one-off override
 python3 bluetti_tray.py --hidden     # tray only
 ```
+
+Only one copy runs at a time: starting it again (from the terminal, the app grid or the dock) just
+opens the running one's dashboard.
 
 Both the tray menu and the dashboard's ☰ menu have:
 
@@ -52,12 +57,17 @@ Settings live in `~/.config/bluetti-linux/config.json`.
 The EB3A accepts **one BLE connection at a time** — close the phone app (or turn off phone
 Bluetooth) or the PC will not find it.
 
-## Autostart
+## App launcher and autostart
 
 ```bash
-cp bluetti-tray.desktop ~/.config/autostart/
-# then edit the Exec= line: real path to bluetti_tray.py, and optionally --address XX:XX:XX:XX:XX:XX
+./install.sh               # "Bluetti EB3A" in the app grid and search, ready to pin to the dock
+./install.sh --autostart   # also start hidden in the tray at login
+./install.sh --uninstall   # remove both
 ```
+
+The entries point at this checkout, so re-run `./install.sh` after moving it. They live in
+`~/.local/share/applications/` and `~/.config/autostart/`; to always use one unit, add
+`--address XX:XX:XX:XX:XX:XX` to their `Exec=` line (or just pick it in Devices…).
 
 ## Tests
 

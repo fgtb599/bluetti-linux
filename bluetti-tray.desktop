@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Bluetti EB3A
-Comment=Bluetti EB3A battery monitor
-Exec=python3 /path/to/bluetti-linux/bluetti_tray.py --hidden
-Icon=battery-good-symbolic
-X-GNOME-Autostart-enabled=true

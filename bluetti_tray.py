@@ -4,33 +4,59 @@
 import argparse
 import asyncio
 import logging
+import sys
 import threading
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-gi.require_version("AyatanaAppIndicator3", "0.1")
-from gi.repository import AyatanaAppIndicator3 as AppIndicator, Gdk, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from bluetti import __version__  # noqa: E402
 from bluetti.ble import Poller  # noqa: E402
 from bluetti.config import Config  # noqa: E402
 from bluetti.dashboard import CSS, PALETTES, Dashboard, flow_text  # noqa: E402
 from bluetti.devices import DevicesDialog  # noqa: E402
+from bluetti.tray import WATCHER, MenuItem, TrayIcon, gtk_menu  # noqa: E402
 from bluetti.tray_icon import DIR as ICON_DIR, arrow_icon, icon_name  # noqa: E402
 
+APP_ID = "io.github.fgtb599.BluettiLinux"  # also the launcher's file name, so GNOME matches the window to it
 THEMES = [("system", "System"), ("light", "Light"), ("dark", "Dark")]
 TRAY_VIEWS = [("battery", "Battery"), ("full", "Battery + in/out")]
 
+log = logging.getLogger(__name__)
+
+
+def tray_host_available():
+    """Whether something on the session bus shows StatusNotifier icons right now.
+
+    The tray icons register once a host appears, but until then nothing shows in the top bar.
+    """
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        reply = bus.call_sync(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "NameHasOwner",
+            GLib.Variant("(s)", (WATCHER,)),
+            GLib.VariantType("(b)"),
+            Gio.DBusCallFlags.NONE,
+            1000,
+        )
+    except GLib.Error as e:
+        log.debug("Could not check for a tray host: %s", e.message)
+        return True
+    return reply.unpack()[0]
+
 
 class TrayApp:
-    def __init__(self, config, address, interval):
+    def __init__(self, app, config, address, interval):
+        self.app = app
         self.config = config
         self.status = None
         self.device = None  # (name, address) of the connected unit
-        self.theme_items = []
-        self.view_items = []
-        self.info_menus = []  # status lines of each tray item's menu
         self.devices_dialog = None
 
         self.css = Gtk.CssProvider()
@@ -51,91 +77,65 @@ class TrayApp:
             interval=interval,
         )
 
-        self.dashboard = Dashboard(on_output=self.poller.set_output, menu=self._build_menu(tray=False))
+        shared_menu = self._build_menu()
+        self.dashboard = Dashboard(on_output=self.poller.set_output, menu=gtk_menu(shared_menu))
+
+        # Every tray item's menu: four status lines, the shared items, then Open dashboard / Quit.
+        self.info_items = [MenuItem("Searching…", enabled=False) for _ in range(4)]
+        tray_menu = [
+            *self.info_items,
+            MenuItem.separator_item(),
+            *shared_menu,
+            MenuItem.separator_item(),
+            MenuItem("Open dashboard", self.dashboard.present),
+            MenuItem("Quit", self.app.quit),
+        ]
 
         # Separate tray items so the input/output arrows can be coloured icons next to their watts.
         # The panel puts each new item to the left of earlier ones, so create them right-to-left
         # to read: battery → input → output.
-        self.indicators = {}
-        self.indicators["out"] = self._make_indicator(
-            "bluetti-eb3a-out", "Bluetti EB3A output", arrow_icon("out", False)
+        self.icons = {}
+        self.icons["out"] = self._make_icon(
+            "bluetti-eb3a-out", "Bluetti EB3A output", arrow_icon("out", False), tray_menu
         )
-        self.indicators["in"] = self._make_indicator("bluetti-eb3a-in", "Bluetti EB3A input", arrow_icon("in", False))
-        self.indicators["battery"] = self._make_indicator("bluetti-eb3a", "Bluetti EB3A battery", icon_name(None))
+        self.icons["in"] = self._make_icon("bluetti-eb3a-in", "Bluetti EB3A input", arrow_icon("in", False), tray_menu)
+        self.icons["battery"] = self._make_icon("bluetti-eb3a", "Bluetti EB3A battery", icon_name(None), tray_menu)
         self._update_tray()
 
         self.apply_theme()
+        self.dashboard.set_application(app)
         self.dashboard.show_all()
         threading.Thread(target=lambda: asyncio.run(self.poller.run()), daemon=True).start()
 
-    def _make_indicator(self, indicator_id, title, icon):
-        indicator = AppIndicator.Indicator.new_with_path(
-            indicator_id, icon, AppIndicator.IndicatorCategory.HARDWARE, str(ICON_DIR)
-        )
-        indicator.set_title(title)
-        indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
-        menu, open_item = self._build_menu(tray=True)
-        indicator.set_menu(menu)
+    def _make_icon(self, item_id, title, icon, menu):
         # Middle-click on the icon opens the dashboard directly.
-        indicator.set_secondary_activate_target(open_item)
-        return indicator
+        return TrayIcon(item_id, title, icon, ICON_DIR, menu, on_secondary_activate=self.dashboard.present)
 
-    # Menus: every tray item's menu and the dashboard's ☰ menu share Theme / Tray view / Devices / About.
+    # Menus: the tray items and the dashboard's ☰ menu share the same Theme / Tray view / Devices / About
+    # items, so a radio change shows up everywhere at once.
 
-    def _build_menu(self, tray):
-        menu = Gtk.Menu()
-        if tray:
-            info_items = [Gtk.MenuItem(label="Searching…", sensitive=False) for _ in range(4)]
-            for item in info_items:
-                menu.append(item)
-            self.info_menus.append(info_items)
-            menu.append(Gtk.SeparatorMenuItem())
-
-        menu.append(self._radio_menu("Theme", THEMES, self.config.theme, self.select_theme, self.theme_items))
-        menu.append(
-            self._radio_menu("Tray view", TRAY_VIEWS, self.config.tray_view, self.select_tray_view, self.view_items)
-        )
-        devices_item = Gtk.MenuItem(label="Devices…")
-        devices_item.connect("activate", lambda _i: self.show_devices())
-        menu.append(devices_item)
-        about_item = Gtk.MenuItem(label="About")
-        about_item.connect("activate", lambda _i: self.show_about())
-        menu.append(about_item)
-
-        if not tray:
-            menu.show_all()
-            return menu
-        menu.append(Gtk.SeparatorMenuItem())
-        open_item = Gtk.MenuItem(label="Open dashboard")
-        open_item.connect("activate", lambda _i: self.dashboard.present())
-        menu.append(open_item)
-        quit_item = Gtk.MenuItem(label="Quit")
-        quit_item.connect("activate", lambda _i: Gtk.main_quit())
-        menu.append(quit_item)
-        menu.show_all()
-        return menu, open_item
+    def _build_menu(self):
+        self.theme_items = self._radio_items(THEMES, self.config.theme, self.select_theme)
+        self.view_items = self._radio_items(TRAY_VIEWS, self.config.tray_view, self.select_tray_view)
+        return [
+            MenuItem("Theme", children=[item for _key, item in self.theme_items]),
+            MenuItem("Tray view", children=[item for _key, item in self.view_items]),
+            MenuItem("Devices…", self.show_devices),
+            MenuItem("About", self.show_about),
+        ]
 
     @staticmethod
-    def _radio_menu(title, options, current, on_select, items):
-        """Submenu of radio items; `items` collects (key, item) so all menus can be kept in sync."""
-        submenu = Gtk.Menu()
-        group = None
-        for key, name in options:
-            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, name)
-            group = item
-            item.set_active(key == current)
-            item.connect("toggled", lambda i, k: i.get_active() and on_select(k), key)
-            submenu.append(item)
-            items.append((key, item))
-        menu_item = Gtk.MenuItem(label=title)
-        menu_item.set_submenu(submenu)
-        return menu_item
+    def _radio_items(options, current, on_select):
+        """(key, item) pairs of radio items; selecting one calls on_select(key)."""
+        return [
+            (key, MenuItem(name, lambda k=key: on_select(k), radio=True, checked=key == current))
+            for key, name in options
+        ]
 
     @staticmethod
     def _sync_radio(items, current):
         for key, item in items:
-            if item.get_active() != (key == current):
-                item.set_active(key == current)
+            item.update(checked=key == current)
 
     def select_theme(self, key):
         if key != self.config.theme:
@@ -166,28 +166,27 @@ class TrayApp:
 
     def _update_tray(self):
         s = self.status
-        battery = self.indicators["battery"]
+        battery = self.icons["battery"]
         if s is None:
-            battery.set_icon_full(icon_name(None), "Not connected")
+            battery.set_icon(icon_name(None), "Not connected")
             battery.set_label("", "")
         else:
-            battery.set_icon_full(icon_name(s), f"{s.battery_pct}%")
+            battery.set_icon(icon_name(s), f"{s.battery_pct}%")
             battery.set_label(f"{s.battery_pct}%", "100%")
 
         show_flow = s is not None and self.config.tray_view == "full"
         for key, watts in (("in", s.input_w if s else 0), ("out", s.output_w if s else 0)):
-            indicator = self.indicators[key]
+            icon = self.icons[key]
             if not show_flow:
-                indicator.set_status(AppIndicator.IndicatorStatus.PASSIVE)
+                icon.set_visible(False)
                 continue
-            indicator.set_icon_full(arrow_icon(key, watts > 0), f"{key} {watts} W")
-            indicator.set_label(f"{watts} W", "8888 W")
-            indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+            icon.set_icon(arrow_icon(key, watts > 0), f"{key} {watts} W")
+            icon.set_label(f"{watts} W", "8888 W")
+            icon.set_visible(True)
 
     def _set_info(self, lines):
-        for items in self.info_menus:
-            for item, text in zip(items, lines):
-                item.set_label(text)
+        for item, text in zip(self.info_items, lines):
+            item.update(label=text)
 
     # Devices and About windows.
 
@@ -282,11 +281,38 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
-    config = Config()
-    app = TrayApp(config, args.address or config.active, args.interval)
-    if args.hidden:
-        app.dashboard.hide()
-    Gtk.main()
+    # One instance per session: launching again (app grid, dock, a second autostart) only opens
+    # the dashboard of the running one. Our own options were parsed above, so GApplication gets none.
+    GLib.set_prgname(APP_ID)  # window class on X11, so the dock shows the launcher's icon
+    app = Gtk.Application(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+    tray = None
+
+    def on_startup(app):
+        nonlocal tray
+        if not tray_host_available():
+            log.warning(
+                "No tray host on the session bus, so the top-bar icons will not show. On GNOME, enable "
+                "the AppIndicator extension: gnome-extensions enable ubuntu-appindicators@ubuntu.com"
+            )
+        app.hold()  # keep running in the tray while the dashboard is hidden
+        config = Config()
+        tray = TrayApp(app, config, args.address or config.active, args.interval)
+        if args.hidden:
+            tray.dashboard.hide()
+
+    start_hidden = args.hidden
+
+    def on_activate(_app):
+        # Every launch activates, this one included; only this one may start hidden (--hidden).
+        nonlocal start_hidden
+        if start_hidden:
+            start_hidden = False
+            return
+        tray.dashboard.present()
+
+    app.connect("startup", on_startup)
+    app.connect("activate", on_activate)
+    app.run([sys.argv[0]])
 
 
 if __name__ == "__main__":
